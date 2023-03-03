@@ -78,7 +78,8 @@ func Write(image, basePath string) error {
 		if err != nil {
 			return fmt.Errorf("fetching blob %s: %w", src, err)
 		}
-		blobTar, err := os.Create(fmt.Sprintf("/tmp/%d.tar", n))
+		tarPath := filepath.Join(basePath, fmt.Sprintf("%d.tar", n))
+		blobTar, err := os.Create(tarPath)
 		defer blobTar.Close()
 		if err != nil {
 			return fmt.Errorf("creating tar : %w", err)
@@ -91,11 +92,17 @@ func Write(image, basePath string) error {
 	}
 	// extract the tars
 	for n := range manifest.Layers {
-		cmd := exec.Command("tar", "xf", fmt.Sprintf("/tmp/%d.tar", n))
-		cmd.Dir = "/tmp/oci" // hack
+		tarPath := filepath.Join(basePath, fmt.Sprintf("%d.tar", n))
+
+		cmd := exec.Command("tar", "xf", tarPath)
+		cmd.Dir = basePath // hack
 		err := cmd.Run()
 		if err != nil {
 			return fmt.Errorf("extracting tar : %w", err)
+		}
+		err = os.Remove(tarPath)
+		if err != nil {
+			return fmt.Errorf("removing tar : %w", err)
 		}
 	}
 	return nil
