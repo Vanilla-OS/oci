@@ -1,12 +1,11 @@
 package oci
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -68,50 +67,36 @@ func Write(image, basePath string) error {
 	if err != nil {
 		return err
 	}
-	for _, layer := range manifest.Layers {
+	// make the tars
+	for n, layer := range manifest.Layers {
 		src := fmt.Sprintf("%s@%s", image, layer.Digest)
 		layer, err := crane.PullLayer(src, options...)
 		if err != nil {
 			return fmt.Errorf("pulling layer %s: %w", src, err)
 		}
-		blob, err := layer.Compressed()
+		blob, err := layer.Uncompressed()
 		if err != nil {
 			return fmt.Errorf("fetching blob %s: %w", src, err)
 		}
-		gzipReader, err := gzip.NewReader(blob)
+		blobTar, err := os.Create(fmt.Sprintf("/tmp/%d.tar", n))
+		defer blobTar.Close()
 		if err != nil {
-			return fmt.Errorf("creating gzip reader: %w", err)
+			return fmt.Errorf("creating tar : %w", err)
 		}
-		defer gzipReader.Close()
-		tarReader := tar.NewReader(gzipReader)
-		for {
-			header, err := tarReader.Next()
-			if err == io.EOF {
-				break
-			} else if err != nil {
-				return err
-			}
-
-			path := filepath.Join(basePath, header.Name)
-			info := header.FileInfo()
-			if info.IsDir() {
-				if err = os.MkdirAll(path, info.Mode()); err != nil {
-					return err
-				}
-				continue
-			}
-
-			file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, info.Mode())
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-			_, err = io.Copy(file, tarReader)
-			if err != nil {
-				return err
-			}
+		_, err = io.Copy(blobTar, blob)
+		if err != nil {
+			return fmt.Errorf("writing tar : %w", err)
 		}
-		return nil
+
+	}
+	// extract the tars
+	for n := range manifest.Layers {
+		cmd := exec.Command("tar", "xf", fmt.Sprintf("/tmp/%d.tar", n))
+		cmd.Dir = "/tmp/oci" // hack
+		err := cmd.Run()
+		if err != nil {
+			return fmt.Errorf("extracting tar : %w", err)
+		}
 	}
 	return nil
 }
